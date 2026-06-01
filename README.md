@@ -2,20 +2,20 @@
 Simple single-header 2D graphics library to use in my classes.
 
 Demos included:
-- Cantor set (cantor.cpp)
-- Mandelbrot set (mandel.cpp)
-- Sierpinski triangle (sierpinski.cpp)
-- Hilber curve (hilbert.cpp)
-- Tree generator (tree.cpp)
-- N-queens solver (nqueens.cpp)
-- Simple rainbow demo (demo.cpp)
+- Cantor set (`cantor.cpp`)
+- Mandelbrot set (`mandel.cpp`)
+- Sierpinski triangle (`sierpinski.cpp`)
+- Hilber curve (`hilbert.cpp`)
+- Tree generator (`tree.cpp`)
+- N-queens solver (`nqueens.cpp`)
+- Simple rainbow demo (`demo.cpp`)
 
 Application:
-- Bitmap viewer (viewbmp.cpp)
+- Bitmap viewer (`viewbmp.cpp`)
 
 Games:
-- Simple Snake game (snake.cpp)
-- Simple Tetris game (tetris.cpp)
+- Simple Snake game (`snake.cpp`)
+- Simple Tetris game (`tetris.cpp`)
 
 # Prerequisite
 - SDL2
