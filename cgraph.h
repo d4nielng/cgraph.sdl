@@ -25,9 +25,14 @@
     - v0.2:
         Completely switch to SDL2 for cross-platform purpose
         Support Windows, macOS and Linux
+    - v0.3:
+        Upgrade cgraph into a simple 2D engine with CTransform, CCollider,
+        CGameObject, CScene, CTimer, and CAnimator support
+        Add bitmap font loading from vga8x8.bmp using a 1-bit LUT for colored text
+        Add bitmap viewer and game demos that use the engine rendering pipeline
 	
     To do:
-	- Convert this into a simple 2D engine
+	- Keep extending the engine with reusable objects and scenes
 	
     Usages:
     - Include this header file in your project
@@ -37,7 +42,7 @@
     Permissions:
     - Feel free to modify the source code to fit your needs
 
-    Lastest update: June, 2026
+    Latest update: June 1, 2026
 */
 
 #include <string>
