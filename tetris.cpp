@@ -22,8 +22,8 @@ class TetrisGame : public CGraph {
 private:
     // Game constants
     static const int BOARD_WIDTH = 10;
-    static const int BOARD_HEIGHT = 20;
-    static const int CELL_SIZE = 24;
+    static const int BOARD_HEIGHT = 24;
+    static const int CELL_SIZE = 16;
     static const int PREVIEW_SIZE = 4;
     
     // Tetris piece definitions (4x4 grid)
@@ -35,6 +35,10 @@ private:
     // Standard Tetris pieces
     static const Piece PIECES[7];
     
+    // Engine components
+    CScene scene;
+    CTimer timer;
+    
     // Game state
     int board[BOARD_HEIGHT][BOARD_WIDTH];
     int currentPieceType;
@@ -44,28 +48,29 @@ private:
     int score;
     int lines;
     bool gameOver;
-    int frameCount;
-    int dropSpeed;
-    int lockDelayFrames;  // Delay before piece is locked in place
-    bool pieceLanded;     // Flag to prevent movement after piece lands
-    const int LOCK_DELAY = 1;  // Frames to wait before locking, 1 is the best value
+    double dropTimer;      // Time accumulator for piece drop
+    double dropInterval;   // Time between drops (in seconds)
+    double lockTimer;      // Time accumulator for lock delay
+    bool pieceLanded;      // Flag to prevent movement after piece lands
+    const double LOCK_DELAY = 0.005;  // Seconds to wait before locking
     
 public:
     TetrisGame() : currentPieceType(0), nextPieceType(0), pieceX(3), pieceY(0), 
                    pieceRotation(0), score(0), lines(0), gameOver(false), 
-                   frameCount(0), dropSpeed(90), lockDelayFrames(0), pieceLanded(false) {
+                   dropTimer(0), dropInterval(0.5), lockTimer(0), pieceLanded(false) {
         srand((unsigned)time(nullptr));  // Seed random once at startup
         create(CELL_SIZE * BOARD_WIDTH + 300, CELL_SIZE * BOARD_HEIGHT + 40, "Tetris - Arrow Keys to Move, W to Rotate, SPACE to Drop");
         resetGame();
     }
     
     void resetGame() {
+        scene.clear();
         memset(board, 0, sizeof(board));
         score = 0;
         lines = 0;
         gameOver = false;
-        frameCount = 0;
-        lockDelayFrames = 0;
+        dropTimer = 0;
+        lockTimer = 0;
         pieceLanded = false;
         
         nextPieceType = rand() % 7;
@@ -85,9 +90,9 @@ public:
         currentPieceType = nextPieceType;
         nextPieceType = rand() % 7;
         pieceX = 3;
-        pieceY = -3;  // Spawn above the field, piece drops into play area
+        pieceY = -2;  // Spawn above the field, piece drops into play area
         pieceRotation = 0;
-        lockDelayFrames = 0;  // Reset lock delay for new piece
+        lockTimer = 0;     // Reset lock delay for new piece
         pieceLanded = false;  // New piece is not landed
         
         if (checkCollision(pieceX, pieceY)) {
@@ -201,7 +206,7 @@ public:
                 score += 2;
             }
             pieceLanded = true;  // Force piece to lock immediately
-            lockDelayFrames = LOCK_DELAY;
+            lockTimer = LOCK_DELAY;
             return;
         }
         
@@ -229,10 +234,11 @@ public:
                 break;
             case SDLK_DOWN:
             case SDLK_s:
-                // Soft drop - move down one cell
+                // Soft drop - move down one cell and reduce drop timer
                 if (!checkCollision(pieceX, pieceY + 1)) {
                     pieceY++;
                     score += 1;
+                    dropTimer = dropInterval - 0.05;  // Speed up next drop slightly
                 }
                 break;
             default:
@@ -240,23 +246,26 @@ public:
         }
     }
     
-    void updateGame() {
+    void updateGame(double deltaTime) {
         if (gameOver) return;
         
-        frameCount++;
-        if (frameCount < dropSpeed) return;
-        frameCount = 0;
+        scene.update(deltaTime);
         
-        if (checkCollision(pieceX, pieceY + 1)) {
-            // Piece has hit something, start lock delay
-            pieceLanded = true;  // Mark piece as landed
-            lockDelayFrames++;
-            if (lockDelayFrames >= LOCK_DELAY) {
-                lockPiece();
+        dropTimer += deltaTime;
+        if (dropTimer >= dropInterval) {
+            dropTimer -= dropInterval;
+            
+            if (checkCollision(pieceX, pieceY + 1)) {
+                // Piece has hit something, start lock delay
+                pieceLanded = true;  // Mark piece as landed
+                lockTimer += deltaTime;
+                if (lockTimer >= LOCK_DELAY) {
+                    lockPiece();
+                }
+            } else {
+                pieceY++;
+                lockTimer = 0;  // Reset delay if piece can still move
             }
-        } else {
-            pieceY++;
-            lockDelayFrames = 0;  // Reset delay if piece can still move
         }
     }
     
@@ -298,7 +307,8 @@ public:
     }
     
     virtual void render() override {
-        updateGame();
+        timer.update();
+        updateGame(timer.getDeltaTime());
         clear(0, 0, 0);
         
         // Center the board horizontally
@@ -309,15 +319,15 @@ public:
         
         // Draw preview box (left side) - enlarged for full piece display
         setColor(100, 100, 100);
-        rectangle(5, 5, 115, 115);
+        rectangle(5 + CELL_SIZE, 5 + CELL_SIZE, 115, 115);
         
         // Draw preview piece (centered in preview box)
         setColor(100, 200, 255);
         const Piece& nextPiece = PIECES[nextPieceType];
         int pieceSize = 4 * CELL_SIZE;  // 96 pixels
         int previewBoxSize = 115;
-        int previewPieceOffsetX = 5 + (previewBoxSize - pieceSize) / 2;
-        int previewPieceOffsetY = 5 + (previewBoxSize - pieceSize) / 2;
+        int previewPieceOffsetX = 5 + CELL_SIZE + (previewBoxSize - pieceSize) / 2;
+        int previewPieceOffsetY = 5 + CELL_SIZE + (previewBoxSize - pieceSize) / 2;
         for (int py = 0; py < 4; py++) {
             for (int px = 0; px < 4; px++) {
                 if (nextPiece.grid[py][px] != 0) {

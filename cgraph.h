@@ -966,13 +966,16 @@ protected:
     COLORREF color;
 	CPoint cursor;	// virtual cursor
 	const uint8_t* keyboardState;  // SDL keyboard state
+	CBitmap fontAtlas;  // Font bitmap atlas (16x16 grid of 8x8 characters)
+	uint8_t fontAtlasLUT[256][8];  // Font LUT: [character][row], each byte is 8 pixels (bits)
+	bool fontLoaded;
 
 public:
     CGraph()
         : window(NULL), surface(NULL), pixels(NULL),
           width(640), height(480), pitch(0),
           title("SDL Window"), clipping(false), initialized(false), fullscreen(false),
-          color(MAKERGB(0, 0, 0)), keyboardState(NULL) {
+          color(MAKERGB(0, 0, 0)), keyboardState(NULL), fontLoaded(false) {
     }
 
     CGraph(int w, int h, std::string title = "SDL Window") {
@@ -1365,6 +1368,113 @@ public:
         filledCircle(xc, yc, r, color);
     }
 
+	// Load font atlas from 1-bit BMP file (256x64 pixels = 32x8 grid of 8x8 characters)
+	// Reads raw bits directly to build 1-bit LUT, independent of CLUT/color interpretation.
+	// Bit = 1 in LUT means "character pixel" (inverted BMP: character pixels have bit=0 in file).
+	bool loadFont(const std::string& fontPath) {
+		std::ifstream is(fontPath, std::ios::binary);
+		if (!is) { fontLoaded = false; return false; }
+
+		// Read BMP file header and info header
+		BITMAPFILEHEADER fhdr;
+		BITMAPINFOHEADER ihdr;
+		is.read((char*)&fhdr, sizeof(fhdr));
+		is.read((char*)&ihdr, sizeof(ihdr));
+
+		if (fhdr.bfType != 0x4D42 || ihdr.biBitCount != 1) {
+			fontLoaded = false;
+			return false;
+		}
+
+		int bmpW = ihdr.biWidth;    // expected 256
+		int bmpH = ihdr.biHeight;   // expected 64
+		int gridCols = bmpW / 8;    // 32 characters per row
+		int gridRows = bmpH / 8;    // 8 rows of characters
+
+		// Each row of the BMP is padded to a 4-byte boundary
+		int stride = ((bmpW + 31) / 32) * 4;
+
+		// Read all raw pixel rows (BMP is stored bottom-to-top)
+		std::vector<std::vector<uint8_t>> rows(bmpH, std::vector<uint8_t>(stride));
+		is.seekg(fhdr.bfOffBits, std::ios::beg);
+		for (int i = 0; i < bmpH; i++) {
+			// BMP rows are bottom-to-top, so row 0 in file = last scanline
+			is.read((char*)rows[bmpH - 1 - i].data(), stride);
+		}
+		is.close();
+
+		// Determine polarity: sample a pixel inside character ' ' (ASCII 32)
+		// Space should be blank. If the bit for space's first pixel is SET,
+		// then bit=1 means background (uninverted file); invert our interpretation.
+		int spaceCol = (32 % gridCols) * 8;
+		int spaceRow = (32 / gridCols) * 8;
+		uint8_t sampleByte = rows[spaceRow][spaceCol / 8];
+		// bit 7 of that byte = leftmost pixel of space
+		bool invertBits = (sampleByte >> 7) & 1;  // if set, bit=1 is background
+
+		// Build 1-bit LUT: fontAtlasLUT[charCode][row]
+		// Each byte: bit 7 = leftmost pixel, bit 0 = rightmost
+		// A set bit means "draw this pixel with the text color"
+		memset(fontAtlasLUT, 0, sizeof(fontAtlasLUT));
+		for (int charCode = 0; charCode < 256; charCode++) {
+			int charGridCol = charCode % gridCols;
+			int charGridRow = charCode / gridCols;
+			int startX = charGridCol * 8;
+			int startY = charGridRow * 8;
+
+			for (int row = 0; row < 8; row++) {
+				// Extract the byte containing the 8 pixels for this row
+				// Each group of 8 pixels is one byte in a 1-bit BMP
+				int byteIndex = startX / 8;
+				int bitShift  = 7 - (startX % 8);  // 0 when byte-aligned
+				uint8_t rawByte = (bitShift == 7)
+					? rows[startY + row][byteIndex]
+					: (uint8_t)((rows[startY + row][byteIndex] << (7 - bitShift)) |
+					            (rows[startY + row][byteIndex + 1] >> (bitShift + 1)));
+				// For an inverted BMP, character bits are 0; flip to make them 1
+				fontAtlasLUT[charCode][row] = invertBits ? rawByte : ~rawByte;
+			}
+		}
+
+		fontLoaded = true;
+		return true;
+	}
+
+	// Fast text rendering using 1-bit LUT with any specified color
+	void drawChar(char ch, int x, int y, COLORREF textColor) {
+		if (!fontLoaded) return;
+		
+		unsigned char charCode = (unsigned char)ch;
+		
+		// Use 1-bit LUT to render character with specified color
+		for (int row = 0; row < 8; row++) {
+			uint8_t rowByte = fontAtlasLUT[charCode][row];
+			
+			// Check each bit and draw pixel if set (1 = character pixel)
+			for (int col = 0; col < 8; col++) {
+				if (!(rowByte & (0x80 >> col))) {  // Bit 7 = left, Bit 0 = right
+					plotPixel(x + col, y + row, textColor);
+				}
+			}
+		}
+	}
+	
+	void drawChar(char ch, int x, int y) {
+		drawChar(ch, x, y, color);
+	}
+	
+	void drawText(const std::string& text, int x, int y, COLORREF textColor) {
+		int currentX = x;
+		for (char ch : text) {
+			drawChar(ch, currentX, y, textColor);
+			currentX += 8;  // 8 pixels per character
+		}
+	}
+	
+	void drawText(const std::string& text, int x, int y) {
+		drawText(text, x, y, color);
+	}
+
 private:
 	void circlePixels(uint32_t xc, uint32_t yc, uint32_t x, uint32_t y, COLORREF color)	{
 		plotPixel(xc+x, yc+y, color);
@@ -1383,6 +1493,276 @@ private:
 		line(xc+y, yc+x, xc-y, yc+x, color);
 		line(xc+y, yc-x, xc-y, yc-x, color);
 	}
+};
+
+// ============================================================================
+// 2D ENGINE COMPONENTS
+// ============================================================================
+
+// CTransform - Manages position, rotation, and scale
+class CTransform {
+public:
+	CVector2D position;
+	CVector2D velocity;
+	double rotation;  // radians
+	double scale;
+	
+	CTransform() : position(0, 0), velocity(0, 0), rotation(0), scale(1.0) {}
+	
+	void update(double deltaTime) {
+		position.incX(velocity.getX() * deltaTime);
+		position.incY(velocity.getY() * deltaTime);
+	}
+	
+	CVector2D getWorldPosition() const { return position; }
+	void setPosition(double x, double y) { position.setX(x).setY(y); }
+	void translate(double dx, double dy) { position.incX(dx).incY(dy); }
+	
+	void setVelocity(double vx, double vy) { velocity.setX(vx).setY(vy); }
+	void setRotation(double rad) { rotation = rad; }
+	void rotate(double dRad) { rotation += dRad; }
+	void setScale(double s) { scale = s; }
+};
+
+// CCollider - Basic collision detection
+class CCollider {
+public:
+	enum Type { AABB, Circle };
+	
+	Type type;
+	double width, height;  // for AABB
+	double radius;          // for circle
+	
+	CCollider(double w, double h) : type(AABB), width(w), height(h), radius(0) {}
+	CCollider(double r) : type(Circle), width(0), height(0), radius(r) {}
+	
+	bool intersects(const CVector2D& pos1, const CCollider& other, const CVector2D& pos2) const {
+		if (type == AABB && other.type == AABB) {
+			// AABB-AABB collision
+			return !(pos1.getX() + width < pos2.getX() ||
+					 pos1.getX() > pos2.getX() + other.width ||
+					 pos1.getY() + height < pos2.getY() ||
+					 pos1.getY() > pos2.getY() + other.height);
+		}
+		else if (type == Circle && other.type == Circle) {
+			// Circle-Circle collision
+			double dx = pos1.getX() - pos2.getX();
+			double dy = pos1.getY() - pos2.getY();
+			double dist = sqrt(dx * dx + dy * dy);
+			return dist < (radius + other.radius);
+		}
+		else if (type == AABB && other.type == Circle) {
+			// AABB-Circle collision
+			double closestX = CMath::clampf(pos2.getX(), pos1.getX(), pos1.getX() + width);
+			double closestY = CMath::clampf(pos2.getY(), pos1.getY(), pos1.getY() + height);
+			double dx = pos2.getX() - closestX;
+			double dy = pos2.getY() - closestY;
+			return (dx * dx + dy * dy) < (other.radius * other.radius);
+		}
+		else {
+			// Circle-AABB collision (swap and recurse)
+			return other.intersects(pos2, *this, pos1);
+		}
+	}
+};
+
+// CGameObject - Base class for all game objects
+class CGameObject {
+protected:
+	CTransform transform;
+	CCollider* collider;
+	COLORREF color;
+	bool active;
+	bool visible;
+	int layer;
+	
+public:
+	CGameObject(double x = 0, double y = 0, COLORREF col = MAKERGB(255, 255, 255))
+		: color(col), active(true), visible(true), layer(0), collider(nullptr) {
+		transform.setPosition(x, y);
+	}
+	
+	virtual ~CGameObject() {
+		if (collider) delete collider;
+	}
+	
+	virtual void update(double deltaTime) {
+		transform.update(deltaTime);
+	}
+	
+	virtual void render(CGraph& gfx) {
+		if (!visible) return;
+		// Draw a circle by default
+		gfx.setColor((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+		gfx.filledCircle((int)transform.position.getX(), 
+					     (int)transform.position.getY(), 5);
+	}
+	
+	void setCollider(CCollider* col) {
+		if (collider) delete collider;
+		collider = col;
+	}
+	
+	bool checkCollision(const CGameObject& other) const {
+		if (!collider || !other.collider) return false;
+		return collider->intersects(transform.position, *other.collider, other.transform.position);
+	}
+	
+	CTransform& getTransform() { return transform; }
+	const CTransform& getTransform() const { return transform; }
+	
+	void setActive(bool a) { active = a; }
+	void setVisible(bool v) { visible = v; }
+	void setLayer(int l) { layer = l; }
+	
+	bool isActive() const { return active; }
+	bool isVisible() const { return visible; }
+	int getLayer() const { return layer; }
+};
+
+// CAnimator - Simple sprite animation
+class CAnimator {
+private:
+	std::vector<CBitmap> frames;
+	int currentFrame;
+	double frameTime;
+	double currentTime;
+	bool isPlaying;
+	bool isLooping;
+	
+public:
+	CAnimator() : currentFrame(0), frameTime(0.1), currentTime(0), 
+				  isPlaying(false), isLooping(true) {}
+	
+	void addFrame(const CBitmap& frame) {
+		frames.push_back(frame);
+	}
+	
+	void play(bool loop = true) {
+		isPlaying = true;
+		isLooping = loop;
+		currentFrame = 0;
+		currentTime = 0;
+	}
+	
+	void stop() {
+		isPlaying = false;
+		currentFrame = 0;
+		currentTime = 0;
+	}
+	
+	void update(double deltaTime) {
+		if (!isPlaying || frames.empty()) return;
+		
+		currentTime += deltaTime;
+		if (currentTime >= frameTime) {
+			currentTime -= frameTime;
+			currentFrame++;
+			
+			if (currentFrame >= (int)frames.size()) {
+				if (isLooping) {
+					currentFrame = 0;
+				} else {
+					isPlaying = false;
+					currentFrame = frames.size() - 1;
+				}
+			}
+		}
+	}
+	
+	const CBitmap& getCurrentFrame() const {
+		if (frames.empty()) {
+			static CBitmap empty;
+			return empty;
+		}
+		return frames[CMath::clampf(currentFrame, 0, frames.size() - 1)];
+	}
+	
+	void setFrameTime(double t) { frameTime = t; }
+};
+
+// CScene - Manages collection of game objects
+class CScene {
+private:
+	std::vector<CGameObject*> objects;
+	int objectIdCounter;
+	
+public:
+	CScene() : objectIdCounter(0) {}
+	
+	virtual ~CScene() {
+		for (auto obj : objects) {
+			delete obj;
+		}
+		objects.clear();
+	}
+	
+	void addObject(CGameObject* obj) {
+		if (obj) {
+			objects.push_back(obj);
+			std::sort(objects.begin(), objects.end(),
+				[](CGameObject* a, CGameObject* b) {
+					return a->getLayer() < b->getLayer();
+				});
+		}
+	}
+	
+	void removeObject(CGameObject* obj) {
+		auto it = std::find(objects.begin(), objects.end(), obj);
+		if (it != objects.end()) {
+			delete *it;
+			objects.erase(it);
+		}
+	}
+	
+	void update(double deltaTime) {
+		for (auto obj : objects) {
+			if (obj->isActive()) {
+				obj->update(deltaTime);
+			}
+		}
+	}
+	
+	void render(CGraph& gfx) {
+		for (auto obj : objects) {
+			if (obj->isVisible()) {
+				obj->render(gfx);
+			}
+		}
+	}
+	
+	std::vector<CGameObject*>& getObjects() { return objects; }
+	const std::vector<CGameObject*>& getObjects() const { return objects; }
+	
+	int getObjectCount() const { return objects.size(); }
+	void clear() {
+		for (auto obj : objects) delete obj;
+		objects.clear();
+	}
+};
+
+// CTimer - Frame timing utility
+class CTimer {
+private:
+	uint32_t lastTicks;
+	double deltaTime;
+	double totalTime;
+	
+public:
+	CTimer() : lastTicks(SDL_GetTicks()), deltaTime(0), totalTime(0) {}
+	
+	void update() {
+		uint32_t currentTicks = SDL_GetTicks();
+		deltaTime = (currentTicks - lastTicks) / 1000.0;
+		totalTime += deltaTime;
+		lastTicks = currentTicks;
+		
+		// Cap delta time to prevent large jumps
+		if (deltaTime > 0.05) deltaTime = 0.05;
+	}
+	
+	double getDeltaTime() const { return deltaTime; }
+	double getTotalTime() const { return totalTime; }
 };
 
 } // namespace daniel
