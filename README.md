@@ -1,5 +1,5 @@
 # CGRAPH.SDL
-Simple single-header 2D graphics library to use in my classes.
+Simple work-in-progress single-header 2D graphics library/engine to use in my classes.
 
 Demos included:
 - Cantor set (`cantor.cpp`)
