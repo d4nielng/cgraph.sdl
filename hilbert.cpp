@@ -10,8 +10,6 @@ using namespace std;
 #define	HEIGHT		WIDTH/2
 #define	DEFAULT		7		// default Hilbert Curve order
 
-int order = DEFAULT;
-
 CVector2D points[] = {
 	CVector2D(0, 0), 
 	CVector2D(0, 1),
@@ -24,12 +22,15 @@ private:
 	int order;
 public:
 	Hilbert() {
-		CGraph::create(WIDTH, HEIGHT, "Hilber Space Filling Curve");
+		CGraph::create(WIDTH, HEIGHT, "Hilbert Space Filling Curve");
 	}
 
 	void setOrder(int ord) { order = ord; }
 	int getOrder() const { return order; }
-	virtual void render() { curve(order); }
+	virtual void render() {
+		clear(0, 0, 0);
+		curve(order);
+	}
 
 	CVector2D hilbert(int i, int order) {
 		long index = i & 3;

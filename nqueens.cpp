@@ -27,13 +27,21 @@ struct point {
                 {1.0-0.20, 1.0-0.20}};
 
 class Queens: public CGraph {
+private:
+    bool board[N][N];
+    bool solved;
 public:
     Queens() {
         CGraph::create(WIDTH, HEIGHT, "N-Queens Solver");
+        memset(board, 0, sizeof(board));
+        solved = explore(board, 0);
+        if (!solved)
+            printf("Solution does not exist\n");
     }
 
     virtual void render() {
-        placeQueens();	
+        if (solved)
+            showSolution(board);
     }
 
     void drawCell(int x, int y, bool white) {
@@ -102,16 +110,6 @@ public:
         return false;  // Cannot be placed in any row in this colum col then return false
     }  
     
-    void placeQueens() {  
-        bool board[N][N];
-        for(int i = 0; i < N; i++)
-               for(int j = 0; j < N; j++)
-                   board[i][j] = false;        
-        if (explore(board, 0) == false)
-            printf("Solution does not exist\n");
-        else
-            showSolution(board);  
-    }  
 };
 
 int main() {

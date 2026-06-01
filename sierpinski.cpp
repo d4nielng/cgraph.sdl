@@ -8,7 +8,7 @@ using namespace daniel;
 #define WIDTH       720
 #define HEIGHT      WIDTH/2
 #define MIN_HEIGHT  8
-#define SQ3         sqrt(3)
+const double SQ3 = sqrt(3.0);
 
 class Sierpinski: public CGraph {
 public:
@@ -17,6 +17,7 @@ public:
     }
 
     virtual void render() {
+        clear(0, 0, 0);
         sierpinski(width / 2,  2 * height / 3 - 4,  height / 2);
     }
 

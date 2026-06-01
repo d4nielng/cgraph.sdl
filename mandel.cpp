@@ -6,9 +6,8 @@
 using namespace daniel;
 using namespace std;
 
-#define FACTOR          9/16
 #define WIDTH           720
-#define HEIGHT          WIDTH*FACTOR
+#define HEIGHT          (WIDTH * 9 / 16)
 #define	MIN_ITER		100
 #define	MAX_ITER		2000
 
@@ -45,7 +44,7 @@ public:
         if (!redraw) return;
 
         double xscale, yscale, zx, zy, cx, tempx, cy;
-        int x, y, i, j, maxx, maxy, count;
+        int x, y, maxx, maxy, count;
       
         maxx = width;
         maxy = height;

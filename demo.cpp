@@ -12,10 +12,11 @@ public:
     }
 
     virtual void render() {
+        clear();
         static int count = 16;
         int ch = height / count;
         for (int i = 0; i < count; i++) {
-            CHSV hsv = CHSV(i * count, 1, 1);
+            CHSV hsv = CHSV(CMath::map(i, 0, count, 0, 360), 1, 1);
             setColor(hsv.toRGB());
             rectangle(0, i * ch, width, ch);
         }

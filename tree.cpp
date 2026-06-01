@@ -27,6 +27,8 @@ public:
     }
 
     virtual void render() {
+        setColor(0x000000);
+        clear();
         draw_tree(WIDTH / 2, HEIGHT - 50, M_PI / 2, DEPTH);
     }
 

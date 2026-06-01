@@ -22,6 +22,8 @@ public:
     }
 
     virtual void render() {
+        setColor(0x000000);
+        clear();
         cantor(CX, CY, SIZE, 0);
     }
     

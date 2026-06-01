@@ -37,7 +37,7 @@
     Permissions:
     - Feel free to modify the source code to fit your needs
 
-    Lastest update: Mar, 2025
+    Lastest update: June, 2026
 */
 
 #include <string>
@@ -284,6 +284,32 @@ public:
 		return * this;	
 	}
 	
+	CVector2D & operator -= (CVector2D v) {
+		this->x -= v.x;
+		this->y -= v.y;
+		return * this;
+	}
+	
+	CVector2D & operator -= (double d) {
+		this->x -= d;
+		this->y -= d;
+		return * this;	
+	}
+	
+	CVector2D & operator *= (double factor) {
+		this->x *= factor;
+		this->y *= factor;
+		return * this;
+	}
+	
+	CVector2D & operator /= (double divisor) {
+		if (divisor != 0.0) {
+			this->x /= divisor;
+			this->y /= divisor;
+		}
+		return * this;
+	}
+	
 	CVector2D & move(double dx, double dy) {
 		this->x += dx;
 		this->y += dy;
@@ -296,9 +322,49 @@ public:
 		return * this;
 	}
 	
+	double angle() const {
+		return atan2(y, x);
+	}
+	
+	double angleDegrees() const {
+		return atan2(y, x) * 180.0 / M_PI;
+	}
+	
+	CVector2D & setMagnitude(double newMag) {
+		double mag = magnitude();
+		if (mag != 0.0) {
+			double factor = newMag / mag;
+			this->x *= factor;
+			this->y *= factor;
+		}
+		return * this;
+	}
+	
+	CVector2D & clampMagnitude(double maxMag) {
+		double mag = magnitude();
+		if (mag > maxMag) {
+			double factor = maxMag / mag;
+			this->x *= factor;
+			this->y *= factor;
+		}
+		return * this;
+	}
+	
+	CVector2D perpendicular() const {
+		return CVector2D(-this->y, this->x);
+	}
+	
+	CVector2D & reflect(const CVector2D & normal) {
+		double d = 2.0 * dot(normal);
+		this->x -= d * normal.x;
+		this->y -= d * normal.y;
+		return * this;
+	}
+	
 	CVector2D & rotate(double theta) {
-		this->x = x * cos(theta) - y * sin(theta);
-		this->y = x * sin(theta) + y * cos(theta);
+		double ox = x;
+		this->x = ox * cos(theta) - y * sin(theta);
+		this->y = ox * sin(theta) + y * cos(theta);
 		return * this;	
 	}
 	
@@ -336,6 +402,23 @@ public:
 		return CVector2D(u.x - v.x, u.y - v.y);
 	}	
 	
+	friend CVector2D operator * (const CVector2D & v, double scalar) {
+		return CVector2D(v.x * scalar, v.y * scalar);
+	}
+	
+	friend CVector2D operator * (double scalar, const CVector2D & v) {
+		return CVector2D(v.x * scalar, v.y * scalar);
+	}
+	
+	friend CVector2D operator / (const CVector2D & v, double divisor) {
+		if (divisor == 0.0) return CVector2D(v);
+		return CVector2D(v.x / divisor, v.y / divisor);
+	}
+	
+	friend CVector2D operator - (const CVector2D & v) {
+		return CVector2D(-v.x, -v.y);
+	}
+	
 	friend bool operator == (const CVector2D & u, const CVector2D & v) {
 		return u.magnitude() == v.magnitude();
 	}
@@ -344,10 +427,26 @@ public:
 		return u.magnitude() != v.magnitude();
 	}
 	
-	static CVector2D zero;
+	static CVector2D lerp(const CVector2D & u, const CVector2D & v, double t) {
+		return CVector2D(u.x + (v.x - u.x) * t, u.y + (v.y - u.y) * t);
+	}
+	
+	static double angle(const CVector2D & u, const CVector2D & v) {
+		double d = u.dot(v);
+		double mag = u.magnitude() * v.magnitude();
+		if (mag == 0.0) return 0.0;
+		return acos(CMath::clampf(d / mag, -1.0, 1.0));
+	}
+	
+	static double angleDegrees(const CVector2D & u, const CVector2D & v) {
+		return angle(u, v) * 180.0 / M_PI;
+	}
+	
+	static CVector2D & zero() {
+		static CVector2D z(0.0f, 0.0f);
+		return z;
+	}
 };
-
-CVector2D CVector2D::zero(0.0f, 0.0f);
 
 class CRGB;	// forward declaration to be used inside CHSV
     
@@ -370,7 +469,8 @@ public:
     double value() const { return v; }
     CHSV & addHue(double dh) {
         this->h += dh;
-        this->h = CMath::clampf(this->h, 0.0f, 359.0f);
+        while (this->h >= 360.0) this->h -= 360.0;
+        while (this->h < 0.0)   this->h += 360.0;
         return *this;
     }
     CHSV & addSaturation(double ds) {
@@ -544,7 +644,7 @@ public:
     bool create(uint32_t w, uint32_t h) {	
         this->w = w;
         this->h = h;
-        data.resize(w * h * sizeof(struct rgba));
+        data.resize(w * h);
         return true;
     }
     
@@ -806,7 +906,7 @@ public:
             if (cb) (*cb)(row, bminf.biHeight);	// invoke the callback function
         }
         os.close();
-        return false;
+        return true;
     }
 
     // Displays information about a loaded Windows Bitmap image
@@ -834,7 +934,6 @@ public:
     
     // Renders the bitmap onto a Window via its handle
     void render(SDL_Surface * surface, bool stretch = false) {
-        uint32_t color;
         uint32_t * pixels = (uint32_t *) surface->pixels;
         for (int y = 0; y < h; y++) {
             uint32_t offset = y * surface->w;
@@ -866,15 +965,14 @@ protected:
 
     COLORREF color;
 	CPoint cursor;	// virtual cursor
+	const uint8_t* keyboardState;  // SDL keyboard state
 
 public:
-    CGraph() {
-        this->clipping = false;
-        this->initialized = false;
-        this->title = "SDL Window";
-        this->width = 640;
-        this->height = 480;
-        this->color = 0;
+    CGraph()
+        : window(NULL), surface(NULL), pixels(NULL),
+          width(640), height(480), pitch(0),
+          title("SDL Window"), clipping(false), initialized(false), fullscreen(false),
+          color(MAKERGB(0, 0, 0)), keyboardState(NULL) {
     }
 
     CGraph(int w, int h, std::string title = "SDL Window") {
@@ -882,8 +980,10 @@ public:
     }
 
     ~CGraph() {
-        SDL_DestroyWindow(window);
-        SDL_Quit();    
+        if (window)
+            SDL_DestroyWindow(window);
+        if (initialized)
+            SDL_Quit();
     }
 
     bool create(int w, int h, std::string title, 
@@ -913,8 +1013,15 @@ public:
         this->surface = SDL_GetWindowSurface(window);
         this->pixels = (uint32_t*) surface->pixels;
         this->pitch = surface->pitch >> 2;
-        this->color = SDL_MapRGB(surface->format, 255, 255, 255);
+        this->color = SDL_MapRGB(surface->format, 0, 0, 0);
         initialized = true;
+        
+        // Initialize keyboard state
+        int numKeys;
+        keyboardState = SDL_GetKeyboardState(&numKeys);
+        
+        SDL_FillRect(surface, NULL, 0);
+        SDL_UpdateWindowSurface(window);
         return true;
     }
 
@@ -935,7 +1042,8 @@ public:
     }
 
     void clear(int r, int g, int b) {
-        clear(MAKERGB(r, g, b));
+        if (surface)
+            clear(SDL_MapRGB(surface->format, r, g, b));
     }
 
     void update() {
@@ -1007,6 +1115,39 @@ public:
         return bmp;
     }
 
+    // Keyboard handling
+    
+    virtual void onKeyDown(SDL_Keysym keysym) {
+        // Override in subclass to handle key down events
+    }
+    
+    virtual void onKeyUp(SDL_Keysym keysym) {
+        // Override in subclass to handle key up events
+    }
+    
+    bool isKeyPressed(SDL_Keycode keycode) {
+        if (!keyboardState) return false;
+        SDL_Scancode scancode = SDL_GetScancodeFromKey(keycode);
+        return keyboardState[scancode] != 0;
+    }
+    
+    bool isKeyDown(SDL_Keycode keycode) {
+        return isKeyPressed(keycode);
+    }
+    
+    // Helper methods for common keys
+    bool isKeyEscapePressed() { return isKeyPressed(SDLK_ESCAPE); }
+    bool isKeySpacePressed() { return isKeyPressed(SDLK_SPACE); }
+    bool isKeyEnterPressed() { return isKeyPressed(SDLK_RETURN); }
+    bool isKeyUpPressed() { return isKeyPressed(SDLK_UP); }
+    bool isKeyDownPressed() { return isKeyPressed(SDLK_DOWN); }
+    bool isKeyLeftPressed() { return isKeyPressed(SDLK_LEFT); }
+    bool isKeyRightPressed() { return isKeyPressed(SDLK_RIGHT); }
+    bool isKeyWPressed() { return isKeyPressed(SDLK_w); }
+    bool isKeyAPressed() { return isKeyPressed(SDLK_a); }
+    bool isKeyDPressed() { return isKeyPressed(SDLK_d); }
+    bool isKeySPressed() { return isKeyPressed(SDLK_s); }
+
     virtual void render() { }
 
     virtual void loop() {
@@ -1019,11 +1160,15 @@ public:
 					quit = 1;
 				}
 				if (e.type == SDL_KEYDOWN) {
+					onKeyDown(e.key.keysym);
 					switch (e.key.keysym.sym) {
 						case SDLK_ESCAPE:
 							quit = 1;
 							break;
 					}
+				}
+				if (e.type == SDL_KEYUP) {
+					onKeyUp(e.key.keysym);
 				}
 			}
 			render();
@@ -1034,8 +1179,10 @@ public:
     // rendering methods
 
     void setColor(int r, int g, int b) {
-        color = MAKERGB(r, g, b);
-        SDL_MapRGB(surface->format, r, g, b);
+        if (surface)
+            color = SDL_MapRGB(surface->format, r, g, b);
+        else
+            color = MAKERGB(r, g, b);
     }
 
     void setColor(COLORREF color) {
@@ -1056,9 +1203,9 @@ public:
         plotPixel(x, y, color);
     }
 
-    void lineHorz(uint32_t x1, uint32_t x2, uint32_t y, COLORREF color) {
+    void lineHorz(int x1, int x2, int y, COLORREF color) {
         if (clipping) {
-            if ((y < 0 | y >= surface->h)) return;
+            if (y < 0 || y >= surface->h) return;
     
             if (x1 > x2) {
                 int temp = x1;
@@ -1067,7 +1214,8 @@ public:
             }
     
             if (x1 < 0) x1 = 0;
-            if (x2 >= surface->w) x2 = surface->w -1;
+            if (x2 >= surface->w) x2 = surface->w - 1;
+            if (x1 > x2) return;
         }
     
         for (int x = x1; x <= x2; x++) {
@@ -1075,11 +1223,11 @@ public:
         }
     }
 
-    void lineHorz(uint32_t x1, uint32_t x2, uint32_t y) {
+    void lineHorz(int x1, int x2, int y) {
         lineHorz(x1, x2, y, color);
     }
 
-    void lineVert(uint32_t x, uint32_t y1, uint32_t y2, COLORREF color) {
+    void lineVert(int x, int y1, int y2, COLORREF color) {
         if (clipping) {
             if (x < 0 || x >= surface->w) return;
             if (y1 > y2) {
@@ -1088,7 +1236,8 @@ public:
                 y2 = temp;
             }
             if (y1 < 0) y1 = 0;
-            if (y2 >= surface->h) y2 = surface->h -1;
+            if (y2 >= surface->h) y2 = surface->h - 1;
+            if (y1 > y2) return;
         }
     
         for (int y = y1; y <= y2; y++) {
@@ -1096,17 +1245,28 @@ public:
         }
     }
 
-    void lineVert(uint32_t x, uint32_t y1, uint32_t y2) {
+    void lineVert(int x, int y1, int y2) {
         lineVert(x, y1, y2, color);
     }
 
-    void rectangle(uint32_t x, uint32_t y, uint32_t width, uint32_t height, COLORREF color) {
+    void rectangle(int x, int y, int width, int height, COLORREF color) {
         if (clipping) {
             if (width <= 0 || height <= 0) return;
-            if (x < 0) x = 0;
-            if (y < 0) y = 0;
+
+            if (x >= surface->w || y >= surface->h) return;
+            if (x + width <= 0 || y + height <= 0) return;
+
+            if (x < 0) {
+                width += x;
+                x = 0;
+            }
+            if (y < 0) {
+                height += y;
+                y = 0;
+            }
             if (x + width > surface->w) width = surface->w - x;
             if (y + height > surface->h) height = surface->h - y;
+            if (width <= 0 || height <= 0) return;
         }
         
         for (int i = 0; i < height; i++) {
@@ -1161,7 +1321,6 @@ public:
 
     void lineTo(int x, int y) {
 		lineTo(x, y, color);
-		moveTo(x, y);
 	}
 
 	// Draws a circle at (xc, yc) with radius r
