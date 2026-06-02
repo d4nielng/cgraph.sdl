@@ -29,3 +29,8 @@ I'm too lazy to test the library on Windows. You can do it yourself.
 
 # Building
 To build them all, type `make` and hit ENTER.
+
+# WIP
+Planned games
+- Sudoku
+- Tic-Tac-Toe

@@ -7,6 +7,11 @@
 //   + / -       - Zoom in / out
 //   R           - Reset view (center, 1:1 zoom)
 //   ESC         - Quit
+//
+// TODO:
+// - Add a single-column file picker with previews
+//
+
 #include "cgraph.h"
 
 using namespace std;
