@@ -1,3 +1,13 @@
 .DS_Store
 .vscode/settings.json
 images/*.bmp
+cantor
+demo
+hilbert
+mandel
+nqueens
+sierpinski
+snake
+tetris
+tree
+viewbmp
