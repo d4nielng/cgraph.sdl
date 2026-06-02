@@ -1,5 +1,5 @@
 CC=g++
-CFLAGS=-O2
+CFLAGS=-O2 --std=c++11
 LFLAGS=
 SDL_CONFIG=$(shell sdl2-config --cflags --libs)
 

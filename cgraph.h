@@ -895,11 +895,15 @@ public:
         this->w = w;
         this->h = h;
         data.resize(w * h);
+        loaded = true;
         return true;
     }
     
     // Clears the content of the bitmap
-    void clear() { data.clear(); }
+    void clear() {
+        data.clear();
+        loaded = false;
+    }
 
     // Directly put pixel into the bitmap buffer
     void setPixel(uint32_t x, uint32_t y, const CRGB & pix) {
@@ -928,6 +932,10 @@ public:
 
     uint32_t * getPixels() {
         return (uint32_t*) data.data();
+    }
+
+    const uint32_t * getPixels() const {
+        return (const uint32_t*) data.data();
     }
 
     // Loads an uncompressed 1, 4, 8, 24 or 32-bit Windows Bitmap file
@@ -1087,10 +1095,10 @@ public:
         return true;
     }
     
-    SDL_Surface * createSurface() {
+    SDL_Surface * createSurface() const {
         if (!data.size() || !w || !h || !loaded)
             return NULL;
-        SDL_Surface * surface = SDL_CreateRGBSurfaceFrom(data.data(), w, h, 32, w * sizeof(struct rgba), 0, 0, 0, 0);
+        SDL_Surface * surface = SDL_CreateRGBSurfaceFrom((void*)data.data(), w, h, 32, w * sizeof(struct rgba), 0, 0, 0, 0);
         if (!surface) return NULL;
         return surface;
     }
@@ -1458,6 +1466,27 @@ static const uint8_t CGRAPH_DEFAULT_FONT_LUT[256][8] = {
     {0xFF, 0xFF, 0x83, 0x83, 0x83, 0x83, 0x83, 0x83}, // 254
     {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF} // 255
 };
+
+struct CGraphOptions {
+    int width;
+    int height;
+    std::string title;
+    bool fullscreen;
+    int flags;
+    bool preferHardware;
+    bool allowFullScreen;
+    bool resizable;
+    int minWidth;
+    int minHeight;
+    int targetFPS;
+    COLORREF backgroundColor;
+
+    CGraphOptions(int width = 640, int height = 480, const std::string & title = "SDL Window")
+        : width(width), height(height), title(title), fullscreen(false), flags(SDL_WINDOW_SHOWN),
+          preferHardware(true), allowFullScreen(false), resizable(false), minWidth(0), minHeight(0),
+          targetFPS(0), backgroundColor(MAKERGB(0, 0, 0)) {}
+};
+
 class CGraph {
 protected:
     enum RenderBackend {
@@ -1474,6 +1503,8 @@ protected:
     uint32_t* pixels;
     uint32_t width;
     uint32_t height;
+    uint32_t windowWidth;
+    uint32_t windowHeight;
     uint32_t pitch;
     std::string title;
     bool clipping;
@@ -1482,9 +1513,27 @@ protected:
     bool allowFullScreen;
     bool hasPreferredFullscreenMode;
     SDL_DisplayMode preferredFullscreenMode;
+    std::string lastError;
     bool hardwareAccelerated;
     bool ownsSurface;
     RenderBackend backend;
+    COLORREF backgroundColor;
+    int keyboardCount;
+    std::vector<uint8_t> currentKeyboardState;
+    std::vector<uint8_t> previousKeyboardState;
+    int mouseX;
+    int mouseY;
+    uint32_t mouseButtons;
+    uint32_t previousMouseButtons;
+    int mouseWheelX;
+    int mouseWheelY;
+    uint32_t lastFrameTicks;
+    double deltaTime;
+    double elapsedTime;
+    int targetFPS;
+    double cameraX;
+    double cameraY;
+    double cameraZoom;
 
     COLORREF color;
 	CPoint cursor;	// virtual cursor
@@ -1495,18 +1544,26 @@ protected:
 public:
     CGraph()
         : window(NULL), renderer(NULL), frameTexture(NULL), windowSurface(NULL), surface(NULL), pixels(NULL),
-          width(640), height(480), pitch(0),
+                    width(640), height(480), windowWidth(640), windowHeight(480), pitch(0),
           title("SDL Window"), clipping(false), initialized(false), fullscreen(false),
                     allowFullScreen(false),
           hasPreferredFullscreenMode(false),
-          hardwareAccelerated(false), ownsSurface(false), backend(BackendSoftware),
-                    color(MAKERGB(0, 0, 0)), keyboardState(NULL), fontLoaded(true) {
+          lastError(""), hardwareAccelerated(false), ownsSurface(false), backend(BackendSoftware),
+                    backgroundColor(MAKERGB(0, 0, 0)), keyboardCount(0), mouseX(0), mouseY(0),
+                    mouseButtons(0), previousMouseButtons(0), mouseWheelX(0), mouseWheelY(0),
+                    lastFrameTicks(0), deltaTime(0.0), elapsedTime(0.0), targetFPS(0),
+                    cameraX(0.0), cameraY(0.0), cameraZoom(1.0), color(MAKERGB(0, 0, 0)),
+                    keyboardState(NULL), fontLoaded(true) {
                 memcpy(fontAtlasLUT, CGRAPH_DEFAULT_FONT_LUT, sizeof(fontAtlasLUT));
                 memset(&preferredFullscreenMode, 0, sizeof(preferredFullscreenMode));
     }
 
     CGraph(int w, int h, std::string title = "SDL Window") {
         create(w, h, title);
+    }
+
+    CGraph(const CGraphOptions & options) {
+        create(options);
     }
 
     ~CGraph() {
@@ -1522,31 +1579,189 @@ public:
             SDL_Quit();
     }
 
+private:
+    void setLastError(const std::string & error) {
+        lastError = error;
+    }
+
+    void clearLastError() {
+        lastError.clear();
+    }
+
+    void syncInputSnapshot() {
+        if (keyboardState && keyboardCount > 0)
+            currentKeyboardState.assign(keyboardState, keyboardState + keyboardCount);
+        mouseButtons = SDL_GetMouseState(&mouseX, &mouseY);
+    }
+
+    void cachePreferredFullscreenMode() {
+        hasPreferredFullscreenMode = false;
+        memset(&preferredFullscreenMode, 0, sizeof(preferredFullscreenMode));
+
+        if (!window)
+            return;
+
+        int displayIndex = SDL_GetWindowDisplayIndex(window);
+        if (displayIndex < 0)
+            displayIndex = 0;
+
+        SDL_DisplayMode targetMode;
+        memset(&targetMode, 0, sizeof(targetMode));
+        targetMode.w = (int)width;
+        targetMode.h = (int)height;
+
+        SDL_DisplayMode closestMode;
+        if (SDL_GetClosestDisplayMode(displayIndex, &targetMode, &closestMode) != NULL) {
+            preferredFullscreenMode = closestMode;
+            hasPreferredFullscreenMode = true;
+        }
+    }
+
+    void updateWindowMetrics() {
+        if (!window)
+            return;
+
+        int currentWindowWidth = 0;
+        int currentWindowHeight = 0;
+        SDL_GetWindowSize(window, &currentWindowWidth, &currentWindowHeight);
+        windowWidth = currentWindowWidth > 0 ? (uint32_t)currentWindowWidth : width;
+        windowHeight = currentWindowHeight > 0 ? (uint32_t)currentWindowHeight : height;
+        windowSurface = SDL_GetWindowSurface(window);
+
+        if (renderer) {
+            SDL_RenderSetLogicalSize(renderer, (int)width, (int)height);
+            SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
+        }
+    }
+
+    SDL_Rect getPresentationRect() const {
+        SDL_Rect rect = { 0, 0, (int)windowWidth, (int)windowHeight };
+        if (width == 0 || height == 0 || windowWidth == 0 || windowHeight == 0)
+            return rect;
+
+        uint32_t scaleUpX = windowWidth / width;
+        uint32_t scaleUpY = windowHeight / height;
+        uint32_t integerScale = std::min(scaleUpX, scaleUpY);
+
+        if (integerScale >= 1) {
+            rect.w = (int)(width * integerScale);
+            rect.h = (int)(height * integerScale);
+        } else {
+            uint32_t scaleDownX = (width + windowWidth - 1) / windowWidth;
+            uint32_t scaleDownY = (height + windowHeight - 1) / windowHeight;
+            uint32_t integerDivisor = std::max(scaleDownX, scaleDownY);
+            if (integerDivisor == 0)
+                integerDivisor = 1;
+            rect.w = std::max(1, (int)(width / integerDivisor));
+            rect.h = std::max(1, (int)(height / integerDivisor));
+        }
+
+        rect.x = ((int)windowWidth - rect.w) / 2;
+        rect.y = ((int)windowHeight - rect.h) / 2;
+        return rect;
+    }
+
+    bool refreshSurfaceResources(uint32_t newWidth, uint32_t newHeight) {
+        COLORREF currentColor = color;
+        COLORREF currentBackground = backgroundColor;
+
+        width = newWidth;
+        height = newHeight;
+
+        if (ownsSurface) {
+            if (surface)
+                SDL_FreeSurface(surface);
+            surface = SDL_CreateRGBSurfaceWithFormat(0,
+                                                     width,
+                                                     height,
+                                                     32,
+                                                     SDL_PIXELFORMAT_ARGB8888);
+            if (!surface) {
+                setLastError(std::string("SDL_CreateRGBSurfaceWithFormat failed: ") + SDL_GetError());
+                pixels = NULL;
+                pitch = 0;
+                return false;
+            }
+        }
+
+        if (backend == BackendHardwarePixels) {
+            if (frameTexture) {
+                SDL_DestroyTexture(frameTexture);
+                frameTexture = NULL;
+            }
+
+            if (renderer) {
+                frameTexture = SDL_CreateTexture(renderer,
+                                                 SDL_PIXELFORMAT_ARGB8888,
+                                                 SDL_TEXTUREACCESS_STREAMING,
+                                                 width,
+                                                 height);
+                if (!frameTexture) {
+                    setLastError(std::string("SDL_CreateTexture failed: ") + SDL_GetError());
+                    return false;
+                }
+            }
+        }
+
+        updateWindowMetrics();
+        pixels = surface ? (uint32_t*)surface->pixels : NULL;
+        pitch = surface ? (surface->pitch >> 2) : 0;
+        color = surface ? SDL_MapRGB(surface->format, RGB_RED(currentColor), RGB_GREEN(currentColor), RGB_BLUE(currentColor)) : currentColor;
+        backgroundColor = surface ? SDL_MapRGB(surface->format, RGB_RED(currentBackground), RGB_GREEN(currentBackground), RGB_BLUE(currentBackground)) : currentBackground;
+        return true;
+    }
+
+public:
+
     bool create(int w, int h, std::string title, 
                 bool fullscreen = false,
                 int flags = SDL_WINDOW_SHOWN,
                 bool preferHardware = true,
                 bool allowFullScreen = false) {
-        if (SDL_Init(SDL_INIT_VIDEO) < 0)
+        CGraphOptions options(w, h, title);
+        options.fullscreen = fullscreen;
+        options.flags = flags;
+        options.preferHardware = preferHardware;
+        options.allowFullScreen = allowFullScreen;
+        return create(options);
+    }
+
+    bool create(const CGraphOptions & options) {
+        clearLastError();
+
+        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+            setLastError(std::string("SDL_Init failed: ") + SDL_GetError());
             return false;
+        }
         
-        this->width = w;
-        this->height = h;
-        this->title = title;
+        this->width = options.width;
+        this->height = options.height;
+        this->title = options.title;
         this->clipping = true;
-        this->allowFullScreen = allowFullScreen;
+        this->allowFullScreen = options.allowFullScreen;
         this->fullscreen = false;
+        this->targetFPS = options.targetFPS;
+        this->backgroundColor = options.backgroundColor;
         this->hasPreferredFullscreenMode = false;
         memset(&this->preferredFullscreenMode, 0, sizeof(this->preferredFullscreenMode));
+
+        int windowFlags = options.flags;
+        if (options.resizable)
+            windowFlags |= SDL_WINDOW_RESIZABLE;
 
         window = SDL_CreateWindow(
             this->title.c_str(),
             SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-            this->width, this->height, flags
+            this->width, this->height, windowFlags
         );
     
-        if (window == NULL) 
+        if (window == NULL) {
+            setLastError(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
             return false;
+        }
+
+        if (options.minWidth > 0 && options.minHeight > 0)
+            SDL_SetWindowMinimumSize(window, options.minWidth, options.minHeight);
 
         // Always keep a CPU surface available for software backend and optional HW pixel mode.
         surface = SDL_CreateRGBSurfaceWithFormat(0,
@@ -1554,21 +1769,21 @@ public:
                                                  this->height,
                                                  32,
                                                  SDL_PIXELFORMAT_ARGB8888);
-        if (!surface)
+        if (!surface) {
+            setLastError(std::string("SDL_CreateRGBSurfaceWithFormat failed: ") + SDL_GetError());
             return false;
+        }
         ownsSurface = true;
 
-        if (preferHardware) {
+        if (options.preferHardware) {
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
             if (renderer) {
-                // HW primitive backend draws directly to renderer backbuffer.
                 backend = BackendHardwarePrimitives;
                 hardwareAccelerated = true;
                 frameTexture = NULL;
             }
         }
 
-        // Software fallback when hardware initialization fails or is disabled.
         if (!renderer) {
             if (frameTexture) {
                 SDL_DestroyTexture(frameTexture);
@@ -1579,54 +1794,52 @@ public:
                 renderer = NULL;
             }
 
-            if (surface && ownsSurface) {
-                SDL_FreeSurface(surface);
-                surface = NULL;
-            }
-
-            surface = SDL_GetWindowSurface(window);
-            ownsSurface = false;
             hardwareAccelerated = false;
             backend = BackendSoftware;
         }
 
-        if (!surface)
+        if (!surface) {
+            setLastError(std::string("Surface initialization failed: ") + SDL_GetError());
             return false;
-
-        int displayIndex = SDL_GetWindowDisplayIndex(window);
-        if (displayIndex < 0)
-            displayIndex = 0;
-
-        SDL_DisplayMode targetMode;
-        memset(&targetMode, 0, sizeof(targetMode));
-        targetMode.w = (int)this->width;
-        targetMode.h = (int)this->height;
-        SDL_DisplayMode closestMode;
-        if (SDL_GetClosestDisplayMode(displayIndex, &targetMode, &closestMode) != NULL) {
-            this->preferredFullscreenMode = closestMode;
-            this->hasPreferredFullscreenMode = true;
         }
 
-        if (fullscreen)
-            setFullscreen(true);
-
-        windowSurface = SDL_GetWindowSurface(window);
+        updateWindowMetrics();
         this->pixels = (uint32_t*) surface->pixels;
         this->pitch = surface->pitch >> 2;
         this->color = SDL_MapRGB(surface->format, 0, 0, 0);
+        this->backgroundColor = SDL_MapRGB(surface->format,
+                                           RGB_RED(this->backgroundColor),
+                                           RGB_GREEN(this->backgroundColor),
+                                           RGB_BLUE(this->backgroundColor));
         initialized = true;
-        
-        // Initialize keyboard state
-        int numKeys;
-        keyboardState = SDL_GetKeyboardState(&numKeys);
-        
-        SDL_FillRect(surface, NULL, 0);
+
+        keyboardState = SDL_GetKeyboardState(&keyboardCount);
+        currentKeyboardState.assign(keyboardState, keyboardState + keyboardCount);
+        previousKeyboardState = currentKeyboardState;
+        mouseButtons = SDL_GetMouseState(&mouseX, &mouseY);
+        previousMouseButtons = mouseButtons;
+        mouseWheelX = 0;
+        mouseWheelY = 0;
+        lastFrameTicks = SDL_GetTicks();
+        deltaTime = 0.0;
+        elapsedTime = 0.0;
+
+        cachePreferredFullscreenMode();
+
+        if (options.fullscreen)
+            setFullscreen(true);
+
+        SDL_FillRect(surface, NULL, backgroundColor);
         update();
         return true;
     }
 
     SDL_Window * getWindow() {
         return window;
+    }
+
+    const std::string & getLastError() const {
+        return lastError;
     }
 
     SDL_Surface * getSurface() {
@@ -1639,6 +1852,22 @@ public:
 
     bool hasRenderer() const {
         return renderer != NULL;
+    }
+
+    double getDeltaTime() const {
+        return deltaTime;
+    }
+
+    double getElapsedTime() const {
+        return elapsedTime;
+    }
+
+    void setTargetFPS(int fps) {
+        targetFPS = fps < 0 ? 0 : fps;
+    }
+
+    int getTargetFPS() const {
+        return targetFPS;
     }
 
     bool isHardwareAccelerated() const {
@@ -1726,6 +1955,18 @@ public:
         clear(this->color);
     }
 
+    void setBackgroundColor(COLORREF color) {
+        backgroundColor = surface ? SDL_MapRGB(surface->format, RGB_RED(color), RGB_GREEN(color), RGB_BLUE(color)) : color;
+    }
+
+    COLORREF getBackgroundColor() const {
+        return backgroundColor;
+    }
+
+    void clearBackground() {
+        clear(backgroundColor);
+    }
+
     void clear(int r, int g, int b) {
         if (surface)
             clear(SDL_MapRGB(surface->format, r, g, b));
@@ -1737,10 +1978,24 @@ public:
         } else if (backend == BackendHardwarePixels) {
             SDL_UpdateTexture(frameTexture, NULL, pixels, surface->pitch);
             SDL_SetRenderTarget(renderer, NULL);
+            SDL_Rect dstRect = getPresentationRect();
+            SDL_SetRenderDrawColor(renderer, RGB_RED(backgroundColor), RGB_GREEN(backgroundColor), RGB_BLUE(backgroundColor), 255);
             SDL_RenderClear(renderer);
-            SDL_RenderCopy(renderer, frameTexture, NULL, NULL);
+            SDL_RenderCopy(renderer, frameTexture, NULL, &dstRect);
             SDL_RenderPresent(renderer);
         } else {
+            if (!windowSurface)
+                updateWindowMetrics();
+            if (!windowSurface)
+                return;
+
+            uint32_t presentColor = SDL_MapRGB(windowSurface->format,
+                                               RGB_RED(backgroundColor),
+                                               RGB_GREEN(backgroundColor),
+                                               RGB_BLUE(backgroundColor));
+            SDL_FillRect(windowSurface, NULL, presentColor);
+            SDL_Rect dstRect = getPresentationRect();
+            SDL_BlitScaled(surface, NULL, windowSurface, &dstRect);
             SDL_UpdateWindowSurface(window);
         }
     }
@@ -1767,6 +2022,12 @@ public:
             SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
         else
             SDL_SetWindowFullscreen(window, 0);
+
+        updateWindowMetrics();
+    }
+
+    void toggleFullscreen() {
+        setFullscreen(!isFullscreen());
     }
 
     void setAllowFullScreen(bool allow) {
@@ -1786,14 +2047,45 @@ public:
         SDL_SetWindowTitle(window, title.c_str());
     }
 
+    void centerWindow() {
+        if (window)
+            SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+    }
+
+    void setResizable(bool resizable) {
+        if (window)
+            SDL_SetWindowResizable(window, resizable ? SDL_TRUE : SDL_FALSE);
+    }
+
+    void setMinSize(int minWidth, int minHeight) {
+        if (window)
+            SDL_SetWindowMinimumSize(window, minWidth, minHeight);
+    }
+
+    void showCursor(bool visible) {
+        SDL_ShowCursor(visible ? SDL_ENABLE : SDL_DISABLE);
+    }
+
     void setWidth(uint32_t w) {
-        this->width = w;
-        SDL_SetWindowSize(window, w, height);    
+        resize(w, height);
     }
 
     void setHeight(uint32_t h) {
-        this->height = h;
-        SDL_SetWindowSize(window, width, h);    
+        resize(width, h);
+    }
+
+    bool resize(uint32_t w, uint32_t h) {
+        if (!window)
+            return false;
+
+        if (!refreshSurfaceResources(w, h))
+            return false;
+
+        SDL_SetWindowSize(window, w, h);
+        updateWindowMetrics();
+
+        onResize((int)w, (int)h);
+        return true;
     }
 
     void setFlags(uint32_t flags) {
@@ -1812,8 +2104,46 @@ public:
         return this->height;
     }
 
+    uint32_t getWindowWidth() const {
+        return this->windowWidth;
+    }
+
+    uint32_t getWindowHeight() const {
+        return this->windowHeight;
+    }
+
     uint32_t getColor() {
         return this->color;
+    }
+
+    void setCamera(double x, double y) {
+        cameraX = x;
+        cameraY = y;
+    }
+
+    void moveCamera(double dx, double dy) {
+        cameraX += dx;
+        cameraY += dy;
+    }
+
+    CVector2D getCamera() const {
+        return CVector2D(cameraX, cameraY);
+    }
+
+    void setZoom(double zoom) {
+        cameraZoom = zoom <= 0.0 ? 1.0 : zoom;
+    }
+
+    double getZoom() const {
+        return cameraZoom;
+    }
+
+    CVector2D worldToScreen(double x, double y) const {
+        return CVector2D((x - cameraX) * cameraZoom, (y - cameraY) * cameraZoom);
+    }
+
+    CVector2D screenToWorld(double x, double y) const {
+        return CVector2D((x / cameraZoom) + cameraX, (y / cameraZoom) + cameraY);
     }
 
     uint32_t* getPixels() {
@@ -1839,11 +2169,213 @@ public:
 
     CBitmap * getBitmap() {
         CBitmap * bmp = new CBitmap(width, height);
-        memcpy(bmp->getPixels(), pixels, width * height * sizeof(uint32_t));
+        if (backend == BackendHardwarePrimitives && renderer) {
+            if (SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888, bmp->getPixels(), width * sizeof(uint32_t)) != 0) {
+                delete bmp;
+                setLastError(std::string("SDL_RenderReadPixels failed: ") + SDL_GetError());
+                return NULL;
+            }
+        } else {
+            memcpy(bmp->getPixels(), pixels, width * height * sizeof(uint32_t));
+        }
         return bmp;
     }
 
+    bool saveScreenshot(const std::string & filename) {
+        clearLastError();
+
+        CBitmap bmp(width, height);
+        uint32_t * dst = bmp.getPixels();
+        if (!dst) {
+            setLastError("Unable to allocate screenshot bitmap");
+            return false;
+        }
+
+        if (backend == BackendHardwarePrimitives) {
+            if (!renderer) {
+                setLastError("Renderer is not available for screenshot capture");
+                return false;
+            }
+            if (SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888, dst, width * sizeof(uint32_t)) != 0) {
+                setLastError(std::string("SDL_RenderReadPixels failed: ") + SDL_GetError());
+                return false;
+            }
+        } else {
+            if (!pixels) {
+                setLastError("Pixel buffer is not available for screenshot capture");
+                return false;
+            }
+            for (uint32_t y = 0; y < height; y++) {
+                memcpy(dst + y * width,
+                       pixels + y * pitch,
+                       width * sizeof(uint32_t));
+            }
+        }
+
+        if (!bmp.write(filename)) {
+            setLastError(std::string("Failed to write screenshot: ") + filename);
+            return false;
+        }
+
+        return true;
+    }
+
+    bool drawBitmap(const CBitmap & bmp, int x, int y) {
+        return drawBitmapRegionScaled(bmp, 0, 0, bmp.width(), bmp.height(), x, y, bmp.width(), bmp.height());
+    }
+
+    bool drawBitmapScaled(const CBitmap & bmp, int x, int y, int w, int h) {
+        return drawBitmapRegionScaled(bmp, 0, 0, bmp.width(), bmp.height(), x, y, w, h);
+    }
+
+    bool drawBitmapRegion(const CBitmap & bmp, int srcX, int srcY, int srcW, int srcH, int x, int y) {
+        return drawBitmapRegionScaled(bmp, srcX, srcY, srcW, srcH, x, y, srcW, srcH);
+    }
+
+    bool drawBitmapRegionScaled(const CBitmap & bmp, int srcX, int srcY, int srcW, int srcH, int x, int y, int dstW, int dstH) {
+        clearLastError();
+
+        if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) {
+            setLastError("Bitmap draw dimensions must be positive");
+            return false;
+        }
+
+        if (srcX < 0 || srcY < 0 || srcX + srcW > bmp.width() || srcY + srcH > bmp.height()) {
+            setLastError("Bitmap source region is out of bounds");
+            return false;
+        }
+
+        if (backend == BackendHardwarePrimitives) {
+            SDL_Surface * bmpSurface = bmp.createSurface();
+            if (!bmpSurface) {
+                setLastError("Unable to create SDL surface from bitmap");
+                return false;
+            }
+
+            SDL_Texture * texture = SDL_CreateTextureFromSurface(renderer, bmpSurface);
+            SDL_FreeSurface(bmpSurface);
+            if (!texture) {
+                setLastError(std::string("SDL_CreateTextureFromSurface failed: ") + SDL_GetError());
+                return false;
+            }
+
+            SDL_Rect srcRect = { srcX, srcY, srcW, srcH };
+            SDL_Rect dstRect = { x, y, dstW, dstH };
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+            int result = SDL_RenderCopy(renderer, texture, &srcRect, &dstRect);
+            SDL_DestroyTexture(texture);
+            if (result != 0) {
+                setLastError(std::string("SDL_RenderCopy failed: ") + SDL_GetError());
+                return false;
+            }
+            return true;
+        }
+
+        const uint32_t * srcPixels = bmp.getPixels();
+        if (!srcPixels || !pixels) {
+            setLastError("Bitmap or destination pixel buffer is unavailable");
+            return false;
+        }
+
+        for (int dy = 0; dy < dstH; dy++) {
+            int sy = srcY + (dy * srcH) / dstH;
+            int py = y + dy;
+            if (py < 0 || py >= (int)height)
+                continue;
+
+            for (int dx = 0; dx < dstW; dx++) {
+                int sx = srcX + (dx * srcW) / dstW;
+                int px = x + dx;
+                if (px < 0 || px >= (int)width)
+                    continue;
+
+                pixels[py * pitch + px] = srcPixels[sy * bmp.width() + sx];
+            }
+        }
+
+        return true;
+    }
+
+    bool drawBitmapRotated(const CBitmap & bmp, int x, int y, double angleDegrees) {
+        clearLastError();
+
+        if (backend == BackendHardwarePrimitives) {
+            SDL_Surface * bmpSurface = bmp.createSurface();
+            if (!bmpSurface) {
+                setLastError("Unable to create SDL surface from bitmap");
+                return false;
+            }
+
+            SDL_Texture * texture = SDL_CreateTextureFromSurface(renderer, bmpSurface);
+            SDL_FreeSurface(bmpSurface);
+            if (!texture) {
+                setLastError(std::string("SDL_CreateTextureFromSurface failed: ") + SDL_GetError());
+                return false;
+            }
+
+            SDL_Rect dstRect = { x, y, bmp.width(), bmp.height() };
+            SDL_Point center = { bmp.width() / 2, bmp.height() / 2 };
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_NONE);
+            int result = SDL_RenderCopyEx(renderer, texture, NULL, &dstRect, angleDegrees, &center, SDL_FLIP_NONE);
+            SDL_DestroyTexture(texture);
+            if (result != 0) {
+                setLastError(std::string("SDL_RenderCopyEx failed: ") + SDL_GetError());
+                return false;
+            }
+            return true;
+        }
+
+        const uint32_t * srcPixels = bmp.getPixels();
+        if (!srcPixels || !pixels) {
+            setLastError("Bitmap or destination pixel buffer is unavailable");
+            return false;
+        }
+
+        double radians = angleDegrees * M_PI / 180.0;
+        double cs = cos(radians);
+        double sn = sin(radians);
+        double halfW = bmp.width() * 0.5;
+        double halfH = bmp.height() * 0.5;
+        int boundsW = (int)ceil(fabs(bmp.width() * cs) + fabs(bmp.height() * sn));
+        int boundsH = (int)ceil(fabs(bmp.width() * sn) + fabs(bmp.height() * cs));
+        double centerX = x + halfW;
+        double centerY = y + halfH;
+        int startX = (int)floor(centerX - boundsW * 0.5);
+        int startY = (int)floor(centerY - boundsH * 0.5);
+
+        for (int dy = 0; dy < boundsH; dy++) {
+            int py = startY + dy;
+            if (py < 0 || py >= (int)height)
+                continue;
+
+            for (int dx = 0; dx < boundsW; dx++) {
+                int px = startX + dx;
+                if (px < 0 || px >= (int)width)
+                    continue;
+
+                double localX = px + 0.5 - centerX;
+                double localY = py + 0.5 - centerY;
+                double srcLocalX = localX * cs + localY * sn;
+                double srcLocalY = -localX * sn + localY * cs;
+                int sx = (int)floor(srcLocalX + halfW);
+                int sy = (int)floor(srcLocalY + halfH);
+
+                if (sx >= 0 && sx < bmp.width() && sy >= 0 && sy < bmp.height())
+                    pixels[py * pitch + px] = srcPixels[sy * bmp.width() + sx];
+            }
+        }
+
+        return true;
+    }
+
     // Keyboard handling
+
+    virtual bool onInit() {
+        return true;
+    }
+
+    virtual void onUpdate(double deltaSeconds) {
+    }
     
     virtual void onKeyDown(SDL_Keysym keysym) {
         // Override in subclass to handle key down events
@@ -1852,15 +2384,80 @@ public:
     virtual void onKeyUp(SDL_Keysym keysym) {
         // Override in subclass to handle key up events
     }
+
+    virtual void onMouseMove(int x, int y, int dx, int dy) {
+    }
+
+    virtual void onMouseDown(uint8_t button, int x, int y) {
+    }
+
+    virtual void onMouseUp(uint8_t button, int x, int y) {
+    }
+
+    virtual void onMouseWheel(int x, int y) {
+    }
+
+    virtual void onResize(int w, int h) {
+    }
+
+    virtual void onShutdown() {
+    }
     
     bool isKeyPressed(SDL_Keycode keycode) {
         if (!keyboardState) return false;
         SDL_Scancode scancode = SDL_GetScancodeFromKey(keycode);
+        if (scancode < 0 || scancode >= keyboardCount) return false;
+        if (!currentKeyboardState.empty())
+            return currentKeyboardState[scancode] != 0;
         return keyboardState[scancode] != 0;
     }
     
     bool isKeyDown(SDL_Keycode keycode) {
         return isKeyPressed(keycode);
+    }
+
+    bool wasKeyPressed(SDL_Keycode keycode) {
+        if (!keyboardState) return false;
+        SDL_Scancode scancode = SDL_GetScancodeFromKey(keycode);
+        if (scancode < 0 || scancode >= keyboardCount) return false;
+        return currentKeyboardState[scancode] != 0 && previousKeyboardState[scancode] == 0;
+    }
+
+    bool wasKeyReleased(SDL_Keycode keycode) {
+        if (!keyboardState) return false;
+        SDL_Scancode scancode = SDL_GetScancodeFromKey(keycode);
+        if (scancode < 0 || scancode >= keyboardCount) return false;
+        return currentKeyboardState[scancode] == 0 && previousKeyboardState[scancode] != 0;
+    }
+
+    int getMouseX() const {
+        return mouseX;
+    }
+
+    int getMouseY() const {
+        return mouseY;
+    }
+
+    bool isMouseButtonDown(uint8_t button) const {
+        return (mouseButtons & SDL_BUTTON(button)) != 0;
+    }
+
+    bool wasMouseButtonPressed(uint8_t button) const {
+        uint32_t mask = SDL_BUTTON(button);
+        return (mouseButtons & mask) != 0 && (previousMouseButtons & mask) == 0;
+    }
+
+    bool wasMouseButtonReleased(uint8_t button) const {
+        uint32_t mask = SDL_BUTTON(button);
+        return (mouseButtons & mask) == 0 && (previousMouseButtons & mask) != 0;
+    }
+
+    int getMouseWheelX() const {
+        return mouseWheelX;
+    }
+
+    int getMouseWheelY() const {
+        return mouseWheelY;
     }
     
     // Helper methods for common keys
@@ -1878,20 +2475,41 @@ public:
 
     virtual void render() { }
 
+    void run() {
+        loop();
+    }
+
     virtual void loop() {
 		SDL_Event e;
 		int quit = 0;
+
+        if (!onInit())
+            return;
+
+        lastFrameTicks = SDL_GetTicks();
 	
 		while (!quit) {
+            uint32_t frameStartTicks = SDL_GetTicks();
+            previousKeyboardState = currentKeyboardState;
+            previousMouseButtons = mouseButtons;
+            mouseWheelX = 0;
+            mouseWheelY = 0;
+
 			while (SDL_PollEvent(&e) != 0) {
 				if (e.type == SDL_QUIT) {
 					quit = 1;
 				}
+                if (e.type == SDL_WINDOWEVENT && e.window.windowID == SDL_GetWindowID(window)) {
+                    if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                        updateWindowMetrics();
+                        onResize(e.window.data1, e.window.data2);
+                    }
+                }
 				if (e.type == SDL_KEYDOWN) {
                     if (allowFullScreen &&
                         (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) &&
                         ((e.key.keysym.mod & KMOD_ALT) || (e.key.keysym.mod & KMOD_GUI))) {
-                        setFullscreen(!isFullscreen());
+                        toggleFullscreen();
                     }
 					onKeyDown(e.key.keysym);
 					switch (e.key.keysym.sym) {
@@ -1903,10 +2521,46 @@ public:
 				if (e.type == SDL_KEYUP) {
 					onKeyUp(e.key.keysym);
 				}
+                if (e.type == SDL_MOUSEMOTION) {
+                    mouseX = e.motion.x;
+                    mouseY = e.motion.y;
+                    onMouseMove(e.motion.x, e.motion.y, e.motion.xrel, e.motion.yrel);
+                }
+                if (e.type == SDL_MOUSEBUTTONDOWN) {
+                    mouseX = e.button.x;
+                    mouseY = e.button.y;
+                    onMouseDown(e.button.button, e.button.x, e.button.y);
+                }
+                if (e.type == SDL_MOUSEBUTTONUP) {
+                    mouseX = e.button.x;
+                    mouseY = e.button.y;
+                    onMouseUp(e.button.button, e.button.x, e.button.y);
+                }
+                if (e.type == SDL_MOUSEWHEEL) {
+                    mouseWheelX += e.wheel.x;
+                    mouseWheelY += e.wheel.y;
+                    onMouseWheel(e.wheel.x, e.wheel.y);
+                }
 			}
+            syncInputSnapshot();
+            uint32_t currentTicks = SDL_GetTicks();
+            deltaTime = (currentTicks - lastFrameTicks) / 1000.0;
+            if (deltaTime > 0.05)
+                deltaTime = 0.05;
+            elapsedTime += deltaTime;
+            lastFrameTicks = currentTicks;
+            onUpdate(deltaTime);
 			render();
 			update();
+            if (targetFPS > 0) {
+                uint32_t targetFrameTicks = 1000U / (uint32_t)targetFPS;
+                uint32_t spentTicks = SDL_GetTicks() - frameStartTicks;
+                if (spentTicks < targetFrameTicks)
+                    SDL_Delay(targetFrameTicks - spentTicks);
+            }
 		}    
+
+        onShutdown();
     }
 
     // rendering methods
@@ -2170,6 +2824,43 @@ public:
         filledCircle(xc, yc, r, color);
     }
 
+    void drawWorldLine(double x1, double y1, double x2, double y2, COLORREF color) {
+        CVector2D p1 = worldToScreen(x1, y1);
+        CVector2D p2 = worldToScreen(x2, y2);
+        line((int)p1.getX(), (int)p1.getY(), (int)p2.getX(), (int)p2.getY(), color);
+    }
+
+    void drawWorldLine(double x1, double y1, double x2, double y2) {
+        drawWorldLine(x1, y1, x2, y2, color);
+    }
+
+    void drawWorldRectangle(double x, double y, double w, double h, COLORREF color) {
+        CVector2D p = worldToScreen(x, y);
+        rectangle((int)p.getX(), (int)p.getY(), (int)(w * cameraZoom), (int)(h * cameraZoom), color);
+    }
+
+    void drawWorldRectangle(double x, double y, double w, double h) {
+        drawWorldRectangle(x, y, w, h, color);
+    }
+
+    void drawWorldCircle(double x, double y, double r, COLORREF color) {
+        CVector2D p = worldToScreen(x, y);
+        drawCircle((int)p.getX(), (int)p.getY(), (int)(r * cameraZoom), color);
+    }
+
+    void drawWorldCircle(double x, double y, double r) {
+        drawWorldCircle(x, y, r, color);
+    }
+
+    void fillWorldCircle(double x, double y, double r, COLORREF color) {
+        CVector2D p = worldToScreen(x, y);
+        filledCircle((int)p.getX(), (int)p.getY(), (int)(r * cameraZoom), color);
+    }
+
+    void fillWorldCircle(double x, double y, double r) {
+        fillWorldCircle(x, y, r, color);
+    }
+
 	// Load font atlas from 1-bit BMP file (256x64 pixels = 32x8 grid of 8x8 characters)
 	// Reads raw bits directly to build 1-bit LUT, independent of CLUT/color interpretation.
 	// Bit = 1 in LUT means "character pixel" (inverted BMP: character pixels have bit=0 in file).
@@ -2274,6 +2965,37 @@ public:
 	void drawText(const std::string& text, int x, int y) {
 		drawText(text, x, y, color);
 	}
+
+    CPoint measureText(const std::string& text) const {
+        return CPoint((double)text.length() * 8.0, 8.0);
+    }
+
+    void drawTextCentered(const std::string& text, int x, int y, COLORREF textColor) {
+        CPoint size = measureText(text);
+        drawText(text, x - (int)(size.getX() * 0.5), y, textColor);
+    }
+
+    void drawTextCentered(const std::string& text, int x, int y) {
+        drawTextCentered(text, x, y, color);
+    }
+
+    void drawTextRight(const std::string& text, int x, int y, COLORREF textColor) {
+        CPoint size = measureText(text);
+        drawText(text, x - (int)size.getX(), y, textColor);
+    }
+
+    void drawTextRight(const std::string& text, int x, int y) {
+        drawTextRight(text, x, y, color);
+    }
+
+    void drawWorldText(const std::string& text, double x, double y, COLORREF textColor) {
+        CVector2D p = worldToScreen(x, y);
+        drawText(text, (int)p.getX(), (int)p.getY(), textColor);
+    }
+
+    void drawWorldText(const std::string& text, double x, double y) {
+        drawWorldText(text, x, y, color);
+    }
 
     // Draws a tiny renderer status badge (HW/SW) at the given position.
     // If bitmap font is loaded, also prints the mode text.

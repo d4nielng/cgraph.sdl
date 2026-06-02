@@ -31,15 +31,22 @@ class Starfield: public CGraph {
     double spreadX;
     double spreadY;
 
-    CTimer timer;
     bool blurEnabled;
     SDL_Texture * trailTexture;
     bool hwBlurAvailable;
+    std::string hudMessage;
+    double hudMessageUntil;
 
 public:
     Starfield() {
-        CGraph::create(WIDTH, HEIGHT, "Starfield (CVector3D Demo)");
-        CGraph::setAllowFullScreen(true);
+        CGraphOptions options(WIDTH, HEIGHT, "Starfield (CVector3D Demo)");
+        options.allowFullScreen = true;
+        options.resizable = true;
+        options.minWidth = 480;
+        options.minHeight = 320;
+        options.targetFPS = 120;
+        options.backgroundColor = MAKERGB(2, 5, 14);
+        CGraph::create(options);
 
         centerX = width * 0.5;
         centerY = height * 0.5;
@@ -54,17 +61,10 @@ public:
         blurEnabled = false;
         trailTexture = NULL;
         hwBlurAvailable = false;
+        hudMessage = "SPACE blur  F12 screenshot  Cmd/Alt+Enter fullscreen";
+        hudMessageUntil = 0.0;
 
-        if (hasRenderer()) {
-            trailTexture = createRenderTargetTexture(width, height, true);
-            if (trailTexture) {
-                setRenderTarget(trailTexture);
-                setBlendMode(SDL_BLENDMODE_BLEND);
-                clearTargetRGBA(2, 5, 14, 255);
-                setRenderTarget(NULL);
-                hwBlurAvailable = true;
-            }
-        }
+        rebuildTrailTexture();
 
         std::srand((unsigned)std::time(NULL));
         stars.resize(STAR_COUNT);
@@ -88,12 +88,22 @@ public:
                 setRenderTarget(NULL);
             }
             updateTitle();
+        } else if (keysym.sym == SDLK_F12) {
+            if (saveScreenshot("starfield-screenshot.bmp")) {
+                hudMessage = "Saved starfield-screenshot.bmp";
+            } else {
+                hudMessage = std::string("Screenshot failed: ") + getLastError();
+            }
+            hudMessageUntil = getElapsedTime() + 2.5;
         }
     }
 
+    virtual void onResize(int w, int h) {
+        updateTitle();
+    }
+
     virtual void render() {
-        timer.update();
-        double dt = timer.getDeltaTime();
+        double dt = getDeltaTime();
 
         if (dt > 0.05) dt = 0.05;
 
@@ -172,15 +182,46 @@ public:
 
         if (hwBlurAvailable) {
             drawRendererStatus(12, 12);
+            setColor(180, 200, 230);
+            drawTextRight("SPACE Blur  F12 Shot", (int)width - 12, (int)height - 16);
+            if (getElapsedTime() < hudMessageUntil) {
+                setColor(220, 235, 255);
+                drawTextCentered(hudMessage, (int)(width * 0.5), 12);
+            }
             setRenderTarget(NULL);
             clearBackbuffer(0, 0, 0, 255);
             copyTextureToBackbuffer(trailTexture);
         } else {
             drawRendererStatus(12, 12);
+            setColor(180, 200, 230);
+            drawTextRight("SPACE Blur  F12 Shot", (int)width - 12, (int)height - 16);
+            if (getElapsedTime() < hudMessageUntil) {
+                setColor(220, 235, 255);
+                drawTextCentered(hudMessage, (int)(width * 0.5), 12);
+            }
         }
     }
 
 private:
+    void rebuildTrailTexture() {
+        destroyTexture(trailTexture);
+        trailTexture = NULL;
+        hwBlurAvailable = false;
+
+        if (!hasRenderer())
+            return;
+
+        trailTexture = createRenderTargetTexture(width, height, true);
+        if (!trailTexture)
+            return;
+
+        setRenderTarget(trailTexture);
+        setBlendMode(SDL_BLENDMODE_BLEND);
+        clearTargetRGBA(2, 5, 14, 255);
+        setRenderTarget(NULL);
+        hwBlurAvailable = true;
+    }
+
     void updateTitle() {
         setTitle(std::string("Starfield (CVector3D Demo) - Blur ") + (blurEnabled ? "ON" : "OFF") +
                  (hwBlurAvailable ? " [HW]" : " [SW]") +
