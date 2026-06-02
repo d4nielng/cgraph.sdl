@@ -96,6 +96,7 @@ public:
                "Snake Game - Arrow Keys or WASD (+/- to adjust speed)");
         srand((unsigned)time(nullptr));
         resetGame();
+        setAllowFullScreen(true);
     }
     
     ~SnakeGame() {

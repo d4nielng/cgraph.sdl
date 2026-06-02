@@ -1479,6 +1479,9 @@ protected:
     bool clipping;
     bool initialized;
     bool fullscreen;
+    bool allowFullScreen;
+    bool hasPreferredFullscreenMode;
+    SDL_DisplayMode preferredFullscreenMode;
     bool hardwareAccelerated;
     bool ownsSurface;
     RenderBackend backend;
@@ -1494,9 +1497,12 @@ public:
         : window(NULL), renderer(NULL), frameTexture(NULL), windowSurface(NULL), surface(NULL), pixels(NULL),
           width(640), height(480), pitch(0),
           title("SDL Window"), clipping(false), initialized(false), fullscreen(false),
+                    allowFullScreen(false),
+          hasPreferredFullscreenMode(false),
           hardwareAccelerated(false), ownsSurface(false), backend(BackendSoftware),
                     color(MAKERGB(0, 0, 0)), keyboardState(NULL), fontLoaded(true) {
                 memcpy(fontAtlasLUT, CGRAPH_DEFAULT_FONT_LUT, sizeof(fontAtlasLUT));
+                memset(&preferredFullscreenMode, 0, sizeof(preferredFullscreenMode));
     }
 
     CGraph(int w, int h, std::string title = "SDL Window") {
@@ -1519,7 +1525,8 @@ public:
     bool create(int w, int h, std::string title, 
                 bool fullscreen = false,
                 int flags = SDL_WINDOW_SHOWN,
-                bool preferHardware = true) {
+                bool preferHardware = true,
+                bool allowFullScreen = false) {
         if (SDL_Init(SDL_INIT_VIDEO) < 0)
             return false;
         
@@ -1527,9 +1534,10 @@ public:
         this->height = h;
         this->title = title;
         this->clipping = true;
-
-        if (fullscreen)
-            flags |= SDL_WINDOW_FULLSCREEN;
+        this->allowFullScreen = allowFullScreen;
+        this->fullscreen = false;
+        this->hasPreferredFullscreenMode = false;
+        memset(&this->preferredFullscreenMode, 0, sizeof(this->preferredFullscreenMode));
 
         window = SDL_CreateWindow(
             this->title.c_str(),
@@ -1584,6 +1592,23 @@ public:
 
         if (!surface)
             return false;
+
+        int displayIndex = SDL_GetWindowDisplayIndex(window);
+        if (displayIndex < 0)
+            displayIndex = 0;
+
+        SDL_DisplayMode targetMode;
+        memset(&targetMode, 0, sizeof(targetMode));
+        targetMode.w = (int)this->width;
+        targetMode.h = (int)this->height;
+        SDL_DisplayMode closestMode;
+        if (SDL_GetClosestDisplayMode(displayIndex, &targetMode, &closestMode) != NULL) {
+            this->preferredFullscreenMode = closestMode;
+            this->hasPreferredFullscreenMode = true;
+        }
+
+        if (fullscreen)
+            setFullscreen(true);
 
         windowSurface = SDL_GetWindowSurface(window);
         this->pixels = (uint32_t*) surface->pixels;
@@ -1729,11 +1754,27 @@ public:
     }
 
     void setFullscreen(bool fs) {
+        if (!window) {
+            this->fullscreen = fs;
+            return;
+        }
+
+        if (fs && hasPreferredFullscreenMode)
+            SDL_SetWindowDisplayMode(window, &preferredFullscreenMode);
+
         this->fullscreen = fs;
         if (fs)
             SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN);
         else
             SDL_SetWindowFullscreen(window, 0);
+    }
+
+    void setAllowFullScreen(bool allow) {
+        this->allowFullScreen = allow;
+    }
+
+    bool isAllowFullScreen() const {
+        return this->allowFullScreen;
     }
 
     bool isFullscreen() {
@@ -1847,6 +1888,11 @@ public:
 					quit = 1;
 				}
 				if (e.type == SDL_KEYDOWN) {
+                    if (allowFullScreen &&
+                        (e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER) &&
+                        ((e.key.keysym.mod & KMOD_ALT) || (e.key.keysym.mod & KMOD_GUI))) {
+                        setFullscreen(!isFullscreen());
+                    }
 					onKeyDown(e.key.keysym);
 					switch (e.key.keysym.sym) {
 						case SDLK_ESCAPE:

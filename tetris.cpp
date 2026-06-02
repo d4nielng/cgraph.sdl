@@ -59,6 +59,8 @@ public:
                    pieceRotation(0), score(0), lines(0), gameOver(false), 
                    dropTimer(0), dropInterval(0.5), lockTimer(0), pieceLanded(false) {
         srand((unsigned)time(nullptr));  // Seed random once at startup
+        currentPieceType = rand() % 7;  // Start with a random piece
+        nextPieceType = rand() % 7;     // Random next piece
         create(CELL_SIZE * BOARD_WIDTH + 300, CELL_SIZE * BOARD_HEIGHT + 40, "Tetris - Arrow Keys to Move, W to Rotate, SPACE to Drop");
         resetGame();
     }

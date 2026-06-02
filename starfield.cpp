@@ -12,7 +12,7 @@ using namespace daniel;
 
 #define WIDTH       800
 #define HEIGHT      600
-#define STAR_COUNT  420
+#define STAR_COUNT  256
 
 class Starfield: public CGraph {
     struct Star {
@@ -39,6 +39,7 @@ class Starfield: public CGraph {
 public:
     Starfield() {
         CGraph::create(WIDTH, HEIGHT, "Starfield (CVector3D Demo)");
+        CGraph::setAllowFullScreen(true);
 
         centerX = width * 0.5;
         centerY = height * 0.5;
