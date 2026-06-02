@@ -1,5 +1,5 @@
 # CGRAPH.SDL
-Simple work-in-progress single-header 2D graphics library/engine to use in my classes.
+Simple work-in-progress single-header hardware accelerated 2D graphics library/engine to use in my classes.
 
 Demos included:
 - Cantor set (`cantor.cpp`)
@@ -7,7 +7,9 @@ Demos included:
 - Sierpinski triangle (`sierpinski.cpp`)
 - Hilber curve (`hilbert.cpp`)
 - Tree generator (`tree.cpp`)
+- 3D starfield (`starfield.cpp`)
 - N-queens solver (`nqueens.cpp`)
+- Starfield (`starfield.cpp`)
 - Simple rainbow demo (`demo.cpp`)
 
 Application:

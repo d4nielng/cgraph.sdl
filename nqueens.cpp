@@ -80,9 +80,6 @@ public:
         CGraph::create(WIDTH, HEIGHT, "N-Queens Solver - Solving...");
         memset(board, 0, sizeof(board));
         
-        // Load the VGA 8x8 font
-        loadFont("vga8x8.bmp");
-        
         // Pick a random starting row for the first queen
         std::srand((unsigned)std::time(nullptr));
         firstRow = std::rand() % N;

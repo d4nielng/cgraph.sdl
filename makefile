@@ -15,7 +15,7 @@ else
 	RM=rm -f
 endif
 
-all: demo sierpinski cantor mandel viewbmp nqueens tree hilbert snake tetris
+all: demo sierpinski cantor mandel viewbmp nqueens tree hilbert snake tetris starfield
 
 .cpp:
 	$(CC) $(SDL_CONFIG) $(CFLAGS) $< -o $@ $(LFLAGS)
@@ -34,4 +34,5 @@ clean:
 	$(RM) tree$(EXE)
 	$(RM) snake$(EXE)
 	$(RM) tetris$(EXE)
+	$(RM) starfield$(EXE)
 

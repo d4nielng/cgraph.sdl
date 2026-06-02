@@ -107,7 +107,6 @@ public:
         uint32_t winH = loaded ? max((uint32_t)img.height(), (uint32_t)480) : 480;
         CGraph::create(winW, winH, "Bitmap Viewer - " + fname);
         setClipping(true);
-        loadFont("vga8x8.bmp");
 
         if (loaded) {
             BitmapObject* obj = new BitmapObject(img);
