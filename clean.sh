@@ -1,0 +1,11 @@
+rm -f cantor
+rm -f demo
+rm -f hilbert
+rm -f mandel
+rm -f sierpinski
+rm -f nqueens
+rm -f snake
+rm -f tree
+rm -f tetris
+rm -f viewbmp
+rm -f starfield

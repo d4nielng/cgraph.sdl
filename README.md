@@ -1,18 +1,6 @@
 # CGRAPH.SDL
 Simple work-in-progress single-header hardware accelerated 2D graphics library/engine to use in my classes.
 
-Recent engine usability upgrades:
-- `CGraphOptions` for self-documenting window/engine configuration
-- `getLastError()` for engine and SDL setup failures
-- Built-in frame timing via `getDeltaTime()`, `getElapsedTime()`, `setTargetFPS()`
-- Frame-based input helpers: `wasKeyPressed()`, `wasKeyReleased()`, mouse position/button/wheel helpers
-- Resize support with `onResize()` and window helpers such as `toggleFullscreen()`, `setResizable()`, `setMinSize()`, `centerWindow()`, `showCursor()`
-- Camera helpers: `setCamera()`, `moveCamera()`, `setZoom()`, `worldToScreen()` and world-space drawing wrappers
-- Bitmap helpers: `drawBitmap()`, `drawBitmapScaled()`, `drawBitmapRegion()`, `drawBitmapRotated()`
-- Text layout helpers: `measureText()`, `drawTextCentered()`, `drawTextRight()`
-- Screenshot helper: `saveScreenshot()`
-- Lifecycle hooks: `onInit()`, `onUpdate()`, `onShutdown()`
-
 Demos included:
 - Cantor set (`cantor.cpp`)
 - Mandelbrot set (`mandel.cpp`)
